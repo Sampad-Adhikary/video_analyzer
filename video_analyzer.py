@@ -135,12 +135,45 @@ def main(args):
         uri_decode_bin.set_property("uri", args[i])
         
         # Connect signal to link pads dynamically
-        def pad_added_callback(element, pad, index):
-            sink_pad = streammux.get_request_pad(f"sink_{index}")
-            if not sink_pad:
-                sys.stderr.write("Unable to get the sink pad of streammux \n")
-            pad.link(sink_pad)
+        #def pad_added_callback(element, pad, index):
+        #    sink_pad = streammux.get_request_pad(f"sink_{index}")
+        #    if not sink_pad:
+        #        sys.stderr.write("Unable to get the sink pad of streammux \n")
+        #    pad.link(sink_pad)
+	
+	def pad_added_callback(element, new_pad, index):
+	    # Get pad caps to ensure we only link video
+	    caps = new_pad.get_current_caps()
+	    if not caps:
+		caps = new_pad.get_caps()
 
+	    structure = caps.get_structure(0)
+	    name = structure.get_name()
+
+	    # Ignore non-video pads (audio, etc.)
+	    if not name.startswith("video"):
+		return
+
+	    # Request streammux sink pad ONLY ONCE per index
+	    if index not in streammux_sinkpads:
+		sink_pad_name = f"sink_{index}"
+		sink_pad = streammux.request_pad_simple(sink_pad_name)
+		if not sink_pad:
+		    sys.stderr.write(f"Unable to get {sink_pad_name} of streammux\n")
+		    return
+		streammux_sinkpads[index] = sink_pad
+	    else:
+		sink_pad = streammux_sinkpads[index]
+
+	    # Avoid double linking
+	    if new_pad.is_linked():
+		return
+
+	    ret = new_pad.link(sink_pad)
+	    if ret != Gst.PadLinkReturn.OK:
+		sys.stderr.write(f"Pad link failed for source {index}: {ret}\n")
+
+	
         uri_decode_bin.connect("pad-added", pad_added_callback, i)
         pipeline.add(uri_decode_bin)
 

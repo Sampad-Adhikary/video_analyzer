@@ -19,7 +19,7 @@ symmetric-padding=1
 #workspace-size=2000
 parse-bbox-func-name=NvDsInferParseYolo
 #parse-bbox-func-name=NvDsInferParseYoloCuda
-custom-lib-path=nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
+custom-lib-path=/home/invieye/DeepStream-Yolo/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
 engine-create-func-name=NvDsInferYoloCudaEngineGet
 
 [class-attrs-all]
