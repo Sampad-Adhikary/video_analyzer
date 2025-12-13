@@ -97,7 +97,8 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
                 break
 
         # Construct Final JSON Payload for this Frame
-        if frame_objects or 1==1:  # Only log if something is detected
+        if frame_objects and any(obj["label"].lower() in ["person", "tv"] for obj in frame_objects):  # Only log if something is detected
+            num_objects = len(frame_objects)
             payload = {
                 "timestamp": datetime.datetime.now().isoformat(),
                 "camera_id": source_id,
@@ -106,7 +107,7 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
             }
             
             # Print to Console (Optional)
-            print(f"Cam {source_id}: Found {len(frame_objects)} objects")
+            print(f"Cam {source_id}: Found {num_objects} objects")
             # Print payload summary (truncated)
             try:
                 payload_preview = json.dumps(payload)
