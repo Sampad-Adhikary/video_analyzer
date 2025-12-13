@@ -28,23 +28,31 @@ TILED_OUTPUT_HEIGHT = 720
 
 def write_json_log(data):
     """Appends a single frame's data as a JSON line to the file."""
-    with open(OUTPUT_JSON_FILE, 'a') as f:
-        json.dump(data, f)
-        f.write('\n')
+    try:
+        with open(OUTPUT_JSON_FILE, 'a') as f:
+            json.dump(data, f)
+            f.write('\n')
+        print(f"[DEBUG] Wrote detection -> camera={data.get('camera_id')} frame={data.get('frame_id')} count={len(data.get('detections', []))}")
+    except Exception as e:
+        print(f"[ERROR] Failed to write detection to {OUTPUT_JSON_FILE}: {e}")
 
 def tiler_sink_pad_buffer_probe(pad, info, u_data):
     """
     This is the core logic. It intercepts the pipeline data, 
     extracts metadata, and formats it to JSON.
     """
+    print("[DEBUG] tiler_sink_pad_buffer_probe called")
     gst_buffer = info.get_buffer()
     if not gst_buffer:
-        print("Unable to get GstBuffer")
+        print("[WARN] Unable to get GstBuffer")
         return Gst.PadProbeReturn.OK
 
     # Retrieve the batch metadata (contains info for all 4 cameras)
     batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
-    
+    if not batch_meta:
+        print("[WARN] No batch_meta retrieved from buffer")
+        return Gst.PadProbeReturn.OK
+
     l_frame = batch_meta.frame_meta_list
     while l_frame is not None:
         try:
@@ -54,7 +62,8 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
 
         # Basic Frame Info
         frame_number = frame_meta.frame_num
-        source_id = frame_meta.source_id # Camera ID (0, 1, 2, 3)
+        source_id = frame_meta.source_id  # Camera ID (0, 1, 2, 3)
+        print(f"[DEBUG] Processing frame -> camera={source_id} frame={frame_number}")
         
         # List to hold objects in this frame
         frame_objects = []
@@ -80,6 +89,7 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
                 }
             }
             frame_objects.append(obj_data)
+            print(f"[DEBUG] Obj: label={obj_data['label']} conf={obj_data['confidence']} bbox={obj_data['bbox']}")
             
             try: 
                 l_obj = l_obj.next
@@ -87,7 +97,7 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
                 break
 
         # Construct Final JSON Payload for this Frame
-        if frame_objects: # Only log if something is detected
+        if frame_objects or 1==1:  # Only log if something is detected
             payload = {
                 "timestamp": datetime.datetime.now().isoformat(),
                 "camera_id": source_id,
@@ -97,7 +107,13 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
             
             # Print to Console (Optional)
             print(f"Cam {source_id}: Found {len(frame_objects)} objects")
-            
+            # Print payload summary (truncated)
+            try:
+                payload_preview = json.dumps(payload)
+                print(f"[DEBUG] Payload preview: {payload_preview[:400]}")
+            except Exception:
+                print("[DEBUG] Payload preview unavailable")
+
             # Write to File
             write_json_log(payload)
 
@@ -132,14 +148,15 @@ def main(args):
     pipeline.add(streammux)
 
     # Handle RTSP Inputs
-    for i in range(len(args)):
-        print(f"Creating source_bin for stream {i} url: {args[i]}")
+    for i, uri in enumerate(args):
+        print(f"Creating source_bin for stream {i} url: {uri}")
 
         source = Gst.ElementFactory.make("uridecodebin", f"uri-decode-bin-{i}")
+        source.set_property("uri", uri)
+
         queue = Gst.ElementFactory.make("queue", f"queue-{i}")
         conv = Gst.ElementFactory.make("nvvideoconvert", f"conv-{i}")
         capsfilter = Gst.ElementFactory.make("capsfilter", f"caps-{i}")
-
         capsfilter.set_property(
             "caps",
             Gst.Caps.from_string("video/x-raw(memory:NVMM)")
@@ -153,24 +170,20 @@ def main(args):
         queue.link(conv)
         conv.link(capsfilter)
 
-        def pad_added_callback(element, pad, index):
-            caps = pad.get_current_caps()
-            if not caps:
-                caps = pad.get_caps()
+        def on_pad_added(src, pad, queue=queue):
+            caps = pad.get_current_caps() or pad.get_caps()
             name = caps.get_structure(0).get_name()
-
             if not name.startswith("video"):
                 return
-
             sink_pad = queue.get_static_pad("sink")
             if not sink_pad.is_linked():
                 pad.link(sink_pad)
 
-        source.connect("pad-added", pad_added_callback, i)
+        source.connect("pad-added", on_pad_added)
 
         mux_sink_pad = streammux.request_pad_simple(f"sink_{i}")
-        src_pad = capsfilter.get_static_pad("src")
-        src_pad.link(mux_sink_pad)
+        capsfilter.get_static_pad("src").link(mux_sink_pad)
+
 
     # Configure Muxer
     streammux.set_property('width', 1280)   # 1280p
