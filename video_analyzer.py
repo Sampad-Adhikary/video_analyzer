@@ -134,48 +134,43 @@ def main(args):
     # Handle RTSP Inputs
     for i in range(len(args)):
         print(f"Creating source_bin for stream {i} url: {args[i]}")
-        uri_decode_bin = Gst.ElementFactory.make("uridecodebin", f"uri-decode-bin-{i}")
-        uri_decode_bin.set_property("uri", args[i])
-        
-        # Connect signal to link pads dynamically
-        #def pad_added_callback(element, pad, index):
-        #    sink_pad = streammux.get_request_pad(f"sink_{index}")
-        #    if not sink_pad:
-        #        sys.stderr.write("Unable to get the sink pad of streammux \n")
-        #    pad.link(sink_pad)
-	
-        def pad_added_callback(element, new_pad, index):
-            # Get pad caps to ensure we only link video
-            caps = new_pad.get_current_caps()
+
+        source = Gst.ElementFactory.make("uridecodebin", f"uri-decode-bin-{i}")
+        queue = Gst.ElementFactory.make("queue", f"queue-{i}")
+        conv = Gst.ElementFactory.make("nvvideoconvert", f"conv-{i}")
+        capsfilter = Gst.ElementFactory.make("capsfilter", f"caps-{i}")
+
+        capsfilter.set_property(
+            "caps",
+            Gst.Caps.from_string("video/x-raw(memory:NVMM)")
+        )
+
+        pipeline.add(source)
+        pipeline.add(queue)
+        pipeline.add(conv)
+        pipeline.add(capsfilter)
+
+        queue.link(conv)
+        conv.link(capsfilter)
+
+        def pad_added_callback(element, pad, index):
+            caps = pad.get_current_caps()
             if not caps:
-                caps = new_pad.get_caps()
+                caps = pad.get_caps()
+            name = caps.get_structure(0).get_name()
 
-            structure = caps.get_structure(0)
-            name = structure.get_name()
-
-            # Ignore non-video pads (audio, etc.)
             if not name.startswith("video"):
                 return
 
-            # Request streammux sink pad ONLY ONCE per index
-            if index not in streammux_sinkpads:
-                sink_pad_name = f"sink_{index}"
-                sink_pad = streammux.request_pad_simple(sink_pad_name)
-                if not sink_pad:
-                    sys.stderr.write(f"Unable to get {sink_pad_name} of streammux\n")
-                    return
-                streammux_sinkpads[index] = sink_pad
-            else:
-                sink_pad = streammux_sinkpads[index]
+            sink_pad = queue.get_static_pad("sink")
+            if not sink_pad.is_linked():
+                pad.link(sink_pad)
 
-            # Avoid double linking
-            if new_pad.is_linked():
-                return
+        source.connect("pad-added", pad_added_callback, i)
 
-            ret = new_pad.link(sink_pad)
-            if ret != Gst.PadLinkReturn.OK:
-                sys.stderr.write(f"Pad link failed for source {index}: {ret}\n")
-
+        mux_sink_pad = streammux.request_pad_simple(f"sink_{i}")
+        src_pad = capsfilter.get_static_pad("src")
+        src_pad.link(mux_sink_pad)
 
     # Configure Muxer
     streammux.set_property('width', 1280)   # 1280p
