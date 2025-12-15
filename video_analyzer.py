@@ -3,6 +3,7 @@ import sys
 import time
 import json
 import datetime
+import socket
 from pathlib import Path
 import gi
 gi.require_version('Gst', '1.0')
