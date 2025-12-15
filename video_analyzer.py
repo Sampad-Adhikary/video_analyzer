@@ -59,16 +59,81 @@ OFFICE_CLOSE_HOUR = 18    # 6 PM IST
 OFFICE_CLOSE_MIN = 15     # 30 Minutes -> 6:30 PM IST
 # --------------------------------
 
+# Ensure file exists and is initialized as an empty array if missing
+if not os.path.exists(OUTPUT_JSON_FILE):
+    with open(OUTPUT_JSON_FILE, 'w') as f:
+        f.write("[]")
+
 def write_json_log(data):
-    """Appends a single frame's data as a JSON line to the file."""
+    """
+    Appends to a JSON array file. 
+    Handles empty arrays [] correctly (no leading comma).
+    Handles populated arrays [{...}] correctly (adds leading comma).
+    """
     try:
-        with open(OUTPUT_JSON_FILE, 'a') as f:
-            # Minified JSON with comma separator
-            json.dump(data, f, separators=(',', ':'))
-            f.write(',\n')
-        print(f"[DEBUG] Wrote detection -> camera={data.get('camera_id')} frame={data.get('frame_id')} count={len(data.get('detections', []))}")
+        with open(OUTPUT_JSON_FILE, 'r+') as f:
+            # 1. Move to the end of the file
+            f.seek(0, os.SEEK_END)
+            filesize = f.tell()
+            
+            # 2. Find the last closing bracket ']'
+            # Scan backwards from the end to skip potential whitespace/newlines
+            pos = filesize
+            found_bracket = False
+            
+            while pos > 0:
+                pos -= 1
+                f.seek(pos)
+                char = f.read(1)
+                if char == ']':
+                    found_bracket = True
+                    break
+            
+            if not found_bracket:
+                # Fallback: File is corrupted or empty, reset to new array
+                f.seek(0)
+                f.truncate()
+                f.write("[\n")
+                json.dump(data, f, separators=(',', ':'))
+                f.write("\n]")
+                return
+
+            # 3. Check if the array is empty
+            # We are currently at the ']' position. We need to look backwards again
+            # to see if the previous non-whitespace character is '['
+            is_array_empty = False
+            scan_pos = pos
+            
+            while scan_pos > 0:
+                scan_pos -= 1
+                f.seek(scan_pos)
+                prev_char = f.read(1)
+                if prev_char.isspace():
+                    continue # Skip spaces/newlines
+                
+                if prev_char == '[':
+                    is_array_empty = True
+                break # We found the previous meaningful character
+
+            # 4. Write Data
+            # Reset pointer to overwrite the existing ']'
+            f.seek(pos)
+            
+            if is_array_empty:
+                # Case: [] -> [{data}]
+                # No comma needed
+                f.write("\n") 
+                json.dump(data, f, separators=(',', ':'))
+                f.write("\n]")
+            else:
+                # Case: [{old}] -> [{old}, {data}]
+                # Comma needed
+                f.write(",\n") 
+                json.dump(data, f, separators=(',', ':'))
+                f.write("\n]")
+
     except Exception as e:
-        print(f"[ERROR] Failed to write detection to {OUTPUT_JSON_FILE}: {e}")
+        print(f"[ERROR] Failed to write JSON: {e}")
 
 def check_policy_violation(camera_name, current_time):
     """
@@ -253,6 +318,35 @@ def bus_call(bus, message, loop):
     elif t == Gst.MessageType.WARNING:
         err, debug = message.parse_warning()
         sys.stderr.write("Warning: %s: %s\n" % (err, debug))
+        
+        # Also check warnings for camera issues (e.g. initial disconnects)
+        error_context = f"{message.src.get_name()} {debug}"
+        if "uri-decode-bin-" in error_context:
+            try:
+                import re
+                match = re.search(r"uri-decode-bin-(\d+)", error_context)
+                if match:
+                    stream_index = int(match.group(1))
+                    cam_name = CAMERA_MAP.get(stream_index, f"UNKNOWN_CAM_{stream_index}")
+                    
+                    alert_payload = {
+                         "meta": {
+                            "ver": "1.0",
+                            "ts": datetime.datetime.now().isoformat() + "Z",
+                            "client": CLIENT_ID,
+                            "site": SITE_ID,
+                            "device": DEVICE_ID,
+                            "cam_id": cam_name,
+                            "src_id": stream_index
+                        },
+                        "alerts": ["CAMERA_WARNING"],
+                        "error_msg": str(err)
+                    }
+                    write_json_log(alert_payload)
+                    print(f"[WARNING] Camera Issue Detected: {cam_name}")
+            except Exception as e:
+                print(f"[ERROR] Failed to log camera warning: {e}")
+
     elif t == Gst.MessageType.ERROR:
         err, debug = message.parse_error()
         sys.stderr.write("Error: %s: %s\n" % (err, debug))
@@ -313,8 +407,14 @@ def main(args):
     for i, uri in enumerate(args):
         print(f"Creating source_bin for stream {i} url: {uri}")
 
-        source = Gst.ElementFactory.make("uridecodebin", f"uri-decode-bin-{i}")
+        # Use nvurisrcbin for auto-reconnection
+        source = Gst.ElementFactory.make("nvurisrcbin", f"uri-decode-bin-{i}")
         source.set_property("uri", uri)
+        
+        # Connect settings
+        source.set_property("rtsp-reconnect-interval", 10) # Try to reconnect every 10s
+        source.set_property("cudadec-memtype", 0) # Use NVMM memory
+        source.set_property("file-loop", 0) # No looping (irrelevant for RTSP but good safety)
 
         queue = Gst.ElementFactory.make("queue", f"queue-{i}")
         conv = Gst.ElementFactory.make("nvvideoconvert", f"conv-{i}")
