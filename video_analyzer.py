@@ -44,6 +44,19 @@ CAMERA_MAP = {
     2: "BOSS_CABIN",
     3: "CAFETERIA"
 }
+
+# --- ACCESS CONTROL POLICIES ---
+# Times are in 24-hour format (e.g., 14 = 2 PM)
+
+# Rule 1: Boss Cabin (Restricted before 11 AM and after 4 PM)
+BOSS_CABIN_OPEN_HOUR = 5  #(10:30 AM IST)
+BOSS_CABIN_CLOSE_HOUR = 10 #(4:30 PM IST)
+
+# Rule 2: General Office (Restricted before Open Time and after 6:30 PM + All day Sunday)
+OFFICE_OPEN_HOUR = 2      # Defaulting to 8:00 AM IST
+OFFICE_OPEN_MIN = 30
+OFFICE_CLOSE_HOUR = 13    # 6 PM IST
+OFFICE_CLOSE_MIN = 0     # 30 Minutes -> 6:30 PM IST
 # --------------------------------
 
 def write_json_log(data):
@@ -56,6 +69,43 @@ def write_json_log(data):
         print(f"[DEBUG] Wrote detection -> camera={data.get('camera_id')} frame={data.get('frame_id')} count={len(data.get('detections', []))}")
     except Exception as e:
         print(f"[ERROR] Failed to write detection to {OUTPUT_JSON_FILE}: {e}")
+
+def check_policy_violation(camera_name, current_time):
+    """
+    Checks if presence is unauthorized based on time and location.
+    Returns a list of alert strings (e.g., ["UNAUTHORIZED_ACCESS"]).
+    """
+    alerts = []
+    
+    # 0 = Monday, 6 = Sunday
+    is_sunday = (current_time.weekday() == 6)
+    hour = current_time.hour
+    minute = current_time.minute
+
+    # --- Rule 1: Boss Cabin ---
+    if camera_name == "BOSS_CABIN":
+        # Safe hours: 11:00 to 15:59 (Before 16:00)
+        # If earlier than 11 OR later/equal to 16, it's a violation
+        if hour < BOSS_CABIN_OPEN_HOUR or hour >= BOSS_CABIN_CLOSE_HOUR:
+            alerts.append("RESTRICTED_ACCESS_BOSS_CABIN")
+            
+    # --- Rule 2: General Office (All other cameras) ---
+    else:
+        # Condition A: Sunday (All day restricted)
+        if is_sunday:
+            alerts.append("RESTRICTED_ACCESS_SUNDAY")
+        
+        # Condition B: Before Open Time
+        elif hour < OFFICE_OPEN_HOUR or (hour == OFFICE_OPEN_HOUR and minute < OFFICE_OPEN_MIN):
+             alerts.append("RESTRICTED_ACCESS_BEFORE_HOURS")
+             
+        # Condition C: After Close Time (6:30 PM)
+        # Violation if Hour > 18 OR (Hour == 18 AND Min >= 30)
+        elif hour > OFFICE_CLOSE_HOUR or (hour == OFFICE_CLOSE_HOUR and minute >= OFFICE_CLOSE_MIN):
+            alerts.append("RESTRICTED_ACCESS_AFTER_HOURS")
+            
+    return alerts
+
 
 def tiler_sink_pad_buffer_probe(pad, info, u_data):
     """
@@ -98,6 +148,14 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
                 break
             
             # Extract Object Data
+            # FILTER: Ignore objects with negative confidence (Tracker updates only)
+            if obj_meta.confidence < 0:
+                try:
+                    l_obj = l_obj.next
+                except StopIteration:
+                    break
+                continue
+
             obj_data = {
                 "class_id": obj_meta.class_id,
                 "label": obj_meta.obj_label,
@@ -110,7 +168,7 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
                 }
             }
             frame_objects.append(obj_data)
-            print(f"[DEBUG] Obj: label={obj_data['label']} conf={obj_data['confidence']} bbox={obj_data['bbox']}")
+            # print(f"[DEBUG] Obj: label={obj_data['label']} conf={obj_data['confidence']} bbox={obj_data['bbox']}")
             
             try: 
                 l_obj = l_obj.next
@@ -144,6 +202,7 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
                     "client": CLIENT_ID,
                     "site": SITE_ID,
                     "device": DEVICE_ID,
+                    "device": DEVICE_ID,
                     "cam_id": unique_cam_id,
                     "src_id": source_id # Keep the raw index for debugging
                 },
@@ -154,6 +213,18 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
                     "detections": frame_objects
                 }
             }
+
+            # --- Check for Policy Violations ---
+            # using current system time for checks
+            now = datetime.datetime.now()
+            site_alerts = check_policy_violation(unique_cam_id, now)
+            
+            if site_alerts:
+                payload["alerts"] = site_alerts
+                # Also print to console for immediate visibility
+                print(f"[ALERT] {unique_cam_id}: {site_alerts}")
+
+            # -----------------------------------
             
             # Print to Console (Optional)
             print(f"Cam {source_id}: Found {num_people} objects")
@@ -184,7 +255,35 @@ def bus_call(bus, message, loop):
         sys.stderr.write("Warning: %s: %s\n" % (err, debug))
     elif t == Gst.MessageType.ERROR:
         err, debug = message.parse_error()
+        src_name = message.src.get_name()
         sys.stderr.write("Error: %s: %s\n" % (err, debug))
+        
+        # Check if error is from a camera source
+        if "uri-decode-bin-" in src_name:
+            try:
+                # Extract stream index "uri-decode-bin-0" -> 0
+                stream_index = int(src_name.split("-")[-1])
+                cam_name = CAMERA_MAP.get(stream_index, f"UNKNOWN_CAM_{stream_index}")
+                
+                # Create detailed alert payload
+                alert_payload = {
+                     "meta": {
+                        "ver": "1.0",
+                        "ts": datetime.datetime.now().isoformat() + "Z",
+                        "client": CLIENT_ID,
+                        "site": SITE_ID,
+                        "device": DEVICE_ID,
+                        "cam_id": cam_name,
+                        "src_id": stream_index
+                    },
+                    "alerts": ["CAMERA_OFFLINE"],
+                    "error_msg": str(err)
+                }
+                write_json_log(alert_payload)
+                print(f"[CRITICAL] Camera Offline Detected: {cam_name}")
+            except Exception as e:
+                print(f"[ERROR] Failed to log camera offline: {e}")
+
         loop.quit()
     return True
 
