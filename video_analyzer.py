@@ -201,7 +201,7 @@ def main(args):
     tracker = Gst.ElementFactory.make("nvtracker", "tracker")
     tracker.set_property('ll-config-file', TRACKER_CONFIG_FILE)
     tracker.set_property('ll-lib-file', '/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so')
-    tracker.set_property('enable-batch-process', 1)
+
     tracker.set_property('tracker-width', 640)
     tracker.set_property('tracker-height', 384)
 
