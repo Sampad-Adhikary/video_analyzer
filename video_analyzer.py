@@ -49,14 +49,14 @@ CAMERA_MAP = {
 # Times are in 24-hour format (e.g., 14 = 2 PM)
 
 # Rule 1: Boss Cabin (Restricted before 11 AM and after 4 PM)
-BOSS_CABIN_OPEN_HOUR = 5  #(10:30 AM IST)
-BOSS_CABIN_CLOSE_HOUR = 10 #(4:30 PM IST)
+BOSS_CABIN_OPEN_HOUR = 11  #(10:30 AM IST)
+BOSS_CABIN_CLOSE_HOUR = 16 #(4:30 PM IST)
 
 # Rule 2: General Office (Restricted before Open Time and after 6:30 PM + All day Sunday)
-OFFICE_OPEN_HOUR = 2      # Defaulting to 8:00 AM IST
+OFFICE_OPEN_HOUR = 9      # Defaulting to 8:00 AM IST
 OFFICE_OPEN_MIN = 30
-OFFICE_CLOSE_HOUR = 13    # 6 PM IST
-OFFICE_CLOSE_MIN = 0     # 30 Minutes -> 6:30 PM IST
+OFFICE_CLOSE_HOUR = 18    # 6 PM IST
+OFFICE_CLOSE_MIN = 15     # 30 Minutes -> 6:30 PM IST
 # --------------------------------
 
 def write_json_log(data):
@@ -255,35 +255,48 @@ def bus_call(bus, message, loop):
         sys.stderr.write("Warning: %s: %s\n" % (err, debug))
     elif t == Gst.MessageType.ERROR:
         err, debug = message.parse_error()
-        src_name = message.src.get_name()
         sys.stderr.write("Error: %s: %s\n" % (err, debug))
         
-        # Check if error is from a camera source
-        if "uri-decode-bin-" in src_name:
+        # Robust check: Search for 'uri-decode-bin-X' in the debug string or source name
+        # The error often comes from GstRTSPSrc which is INSIDE the bin.
+        # Debug string looks like: "... /GstPipeline:pipeline0/GstURIDecodeBin:uri-decode-bin-2/..."
+        error_context = f"{message.src.get_name()} {debug}"
+        
+        if "uri-decode-bin-" in error_context:
             try:
-                # Extract stream index "uri-decode-bin-0" -> 0
-                stream_index = int(src_name.split("-")[-1])
-                cam_name = CAMERA_MAP.get(stream_index, f"UNKNOWN_CAM_{stream_index}")
-                
-                # Create detailed alert payload
-                alert_payload = {
-                     "meta": {
-                        "ver": "1.0",
-                        "ts": datetime.datetime.now().isoformat() + "Z",
-                        "client": CLIENT_ID,
-                        "site": SITE_ID,
-                        "device": DEVICE_ID,
-                        "cam_id": cam_name,
-                        "src_id": stream_index
-                    },
-                    "alerts": ["CAMERA_OFFLINE"],
-                    "error_msg": str(err)
-                }
-                write_json_log(alert_payload)
-                print(f"[CRITICAL] Camera Offline Detected: {cam_name}")
+                # Regex or string splitting to find the ID
+                # Find substring after "uri-decode-bin-"
+                # Simple parsing assuming standard naming
+                import re
+                match = re.search(r"uri-decode-bin-(\d+)", error_context)
+                if match:
+                    stream_index = int(match.group(1))
+                    cam_name = CAMERA_MAP.get(stream_index, f"UNKNOWN_CAM_{stream_index}")
+                    
+                    # Create detailed alert payload
+                    alert_payload = {
+                         "meta": {
+                            "ver": "1.0",
+                            "ts": datetime.datetime.now().isoformat() + "Z",
+                            "client": CLIENT_ID,
+                            "site": SITE_ID,
+                            "device": DEVICE_ID,
+                            "cam_id": cam_name,
+                            "src_id": stream_index
+                        },
+                        "alerts": ["CAMERA_OFFLINE"],
+                        "error_msg": str(err)
+                    }
+                    write_json_log(alert_payload)
+                    print(f"[CRITICAL] Camera Offline Detected: {cam_name}")
+                    
+                    # DO NOT QUIT LOOP - Let other cameras continue
+                    return True
+                    
             except Exception as e:
                 print(f"[ERROR] Failed to log camera offline: {e}")
 
+        # For critical pipeline errors (not individual camera sources), we quit
         loop.quit()
     return True
 
