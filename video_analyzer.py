@@ -27,12 +27,31 @@ TILED_OUTPUT_WIDTH = 1280
 TILED_OUTPUT_HEIGHT = 720
 # ---------------------
 
+# --- DEPLOYMENT CONFIGURATION ---
+# In production, these should be loaded from Environment Variables (e.g., Docker ENV)
+# using os.getenv("CLIENT_ID", "default_client")
+
+CLIENT_ID = "INVINCIBLE_OCEAN"           # Who is the customer?
+SITE_ID = "HEAD_OFFICE"      # Physical location
+DEVICE_ID = socket.gethostname()  # Or manual ID like "JETSON_ORIN_01"
+
+# Map the Source ID (0, 1, 2...) to unique Camera UUIDs/Names
+# You must match these to your RTSP URI order in the command line arguments
+CAMERA_MAP = {
+    0: "RECEPTION_AREA",
+    1: "EMPLOYEE_AREA",
+    2: "BOSS_CABIN",
+    3: "CAFETERIA"
+}
+# --------------------------------
+
 def write_json_log(data):
     """Appends a single frame's data as a JSON line to the file."""
     try:
         with open(OUTPUT_JSON_FILE, 'a') as f:
-            json.dump(data, f)
-            f.write('\n')
+            # Minified JSON with comma separator
+            json.dump(data, f, separators=(',', ':'))
+            f.write(',\n')
         print(f"[DEBUG] Wrote detection -> camera={data.get('camera_id')} frame={data.get('frame_id')} count={len(data.get('detections', []))}")
     except Exception as e:
         print(f"[ERROR] Failed to write detection to {OUTPUT_JSON_FILE}: {e}")
@@ -99,16 +118,44 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
 
         # Construct Final JSON Payload for this Frame
         if frame_objects and any(obj["label"].lower() in ["person", "tv"] for obj in frame_objects):  # Only log if something is detected
-            num_objects = len(frame_objects)
+            # Count the number of person
+            num_people = len([obj for obj in frame_objects if obj["label"].lower() == "person"])
+
+            # Resolve the unique Camera ID (Fallback to index if not in map)
+            unique_cam_id = CAMERA_MAP.get(source_id, f"UNKNOWN_CAM_{source_id}")
+
+            # Creating payload to dump in JSON file
+
+            # Old Payload
+            # payload = {
+            #     "timestamp": datetime.datetime.now().isoformat(),
+            #     "camera_id": source_id,
+            #     "frame_id": frame_number,
+            #     "detections": frame_objects
+            # }
+
+            # New Payload
             payload = {
-                "timestamp": datetime.datetime.now().isoformat(),
-                "camera_id": source_id,
-                "frame_id": frame_number,
-                "detections": frame_objects
+                # METADATA HEADER (The "Who, Where, When")
+                "meta": {
+                    "ver": "1.0", # Schema version
+                    "ts": datetime.datetime.now().isoformat() + "Z", # Always use UTC for multi-site
+                    "client": CLIENT_ID,
+                    "site": SITE_ID,
+                    "device": DEVICE_ID,
+                    "cam_id": unique_cam_id,
+                    "src_id": source_id # Keep the raw index for debugging
+                },
+                # DATA BODY (The "What")
+                "data": {
+                    "fid": frame_number,
+                    "people_count": num_people,
+                    "detections": frame_objects
+                }
             }
             
             # Print to Console (Optional)
-            print(f"Cam {source_id}: Found {num_objects} objects")
+            print(f"Cam {source_id}: Found {num_people} objects")
             # Print payload summary (truncated)
             try:
                 payload_preview = json.dumps(payload)
