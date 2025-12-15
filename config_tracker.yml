@@ -1,0 +1,28 @@
+%YAML:1.0
+
+# NvDCF Tracker Configuration for DeepStream 6.x
+# Optimized for People/Fire/Smoke tracking
+
+misc:
+  bbox-padding-scale: 0.2
+
+ll-config:
+  # NvDCF specific config
+  min-detector-confidence: 0.2   # Ignore weak detections
+  min-tracker-confidence: 0.5    # Only track if confidence is good
+  min-tracking-match-score: 0.8  # Strict matching
+  use-color: 1                   # Use color info for association
+
+  # Motion model options
+  prediction-duration: 3         # How many frames to predict if detection is lost (handles interval=2)
+  shadow-tracking-age: 2         # How many frames to keep tracking without detection
+
+  # Dynamics (Tuning for people walking)
+  max-shadow-tracking-age: 10
+  probation-age: 3               # How long before a new ID is confirmed
+  early-termination-age: 1       # Kill ghosts quickly
+
+  # Resolution (Trade-off speed/accuracy)
+  # Standard for Orin Nano
+  tracker-width: 640
+  tracker-height: 384

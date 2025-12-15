@@ -22,7 +22,6 @@ except ImportError:
 OUTPUT_JSON_FILE = "detection_log.json"
 # REPLACE THIS with the path to your YOLO config file
 PGIE_CONFIG_FILE = "config_infer_primary_yoloV8.txt" 
-TRACKER_CONFIG_FILE = "config_tracker.yml" 
 TILED_OUTPUT_WIDTH = 1280
 TILED_OUTPUT_HEIGHT = 720
 # ---------------------
@@ -197,14 +196,6 @@ def main(args):
     pgie = Gst.ElementFactory.make("nvinfer", "primary-inference")
     pgie.set_property('config-file-path', PGIE_CONFIG_FILE)
 
-    # Tracker
-    tracker = Gst.ElementFactory.make("nvtracker", "tracker")
-    tracker.set_property('ll-config-file', TRACKER_CONFIG_FILE)
-    tracker.set_property('ll-lib-file', '/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so')
-    tracker.set_property('enable-batch-process', 1)
-    tracker.set_property('tracker-width', 640)
-    tracker.set_property('tracker-height', 384)
-
     # Tiler (Grid view - optional but good for combining streams before probe)
     tiler = Gst.ElementFactory.make("nvmultistreamtiler", "nvtiler")
     tiler.set_property("width", TILED_OUTPUT_WIDTH)
@@ -217,14 +208,12 @@ def main(args):
     sink = Gst.ElementFactory.make("fakesink", "nvvideo-renderer")
 
     pipeline.add(pgie)
-    pipeline.add(tracker)
     pipeline.add(tiler)
     pipeline.add(nvvidconv)
     pipeline.add(sink)
 
     streammux.link(pgie)
-    pgie.link(tracker)
-    tracker.link(tiler)
+    pgie.link(tiler)
     tiler.link(nvvidconv)
     nvvidconv.link(sink)
 
