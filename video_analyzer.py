@@ -407,14 +407,10 @@ def main(args):
     for i, uri in enumerate(args):
         print(f"Creating source_bin for stream {i} url: {uri}")
 
-        # Use nvurisrcbin for auto-reconnection
-        source = Gst.ElementFactory.make("nvurisrcbin", f"uri-decode-bin-{i}")
+        source = Gst.ElementFactory.make("uridecodebin", f"uri-decode-bin-{i}")
         source.set_property("uri", uri)
         
-        # Connect settings
-        source.set_property("rtsp-reconnect-interval", 10) # Try to reconnect every 10s
-        source.set_property("cudadec-memtype", 0) # Use NVMM memory
-        source.set_property("file-loop", 0) # No looping (irrelevant for RTSP but good safety)
+        # Revert to standard properties (nvurisrcbin props like rtsp-reconnect-interval removed)
 
         queue = Gst.ElementFactory.make("queue", f"queue-{i}")
         conv = Gst.ElementFactory.make("nvvideoconvert", f"conv-{i}")
