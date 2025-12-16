@@ -57,7 +57,7 @@ CAMERA_MAP = {
 # Times are in 24-hour format (e.g., 14 = 2 PM)
 
 # Rule 1: Boss Cabin (Restricted before 11 AM and after 4 PM)
-BOSS_CABIN_OPEN_HOUR = 11  #(10:30 AM IST)
+BOSS_CABIN_OPEN_HOUR = 13  #(10:30 AM IST)
 BOSS_CABIN_CLOSE_HOUR = 16 #(4:30 PM IST)
 
 # Rule 2: General Office (Restricted before Open Time and after 6:30 PM + All day Sunday)
@@ -168,7 +168,7 @@ def check_policy_violation(camera_name, current_time):
     # --- Rule 2: General Office (All other cameras) ---
     else:        
         # Condition B: Before Open Time
-        elif hour < OFFICE_OPEN_HOUR or (hour == OFFICE_OPEN_HOUR and minute < OFFICE_OPEN_MIN):
+        if hour < OFFICE_OPEN_HOUR or (hour == OFFICE_OPEN_HOUR and minute < OFFICE_OPEN_MIN):
              alerts.append("RESTRICTED_ACCESS_BEFORE_HOURS")   
         # Condition C: After Close Time (6:30 PM)
         # Violation if Hour > 18 OR (Hour == 18 AND Min >= 30)
