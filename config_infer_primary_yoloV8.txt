@@ -2,9 +2,8 @@
 gpu-id=0
 net-scale-factor=0.0039215697906911373
 model-color-format=0
-onnx-file=yolo11s.pt.onnx
+onnx-file=yolo11n.pt.onnx
 model-engine-file=model_b4_gpu0_fp16.engine
-batch-size=4
 labelfile-path=labels.txt
 network-mode=2
 num-detected-classes=80
