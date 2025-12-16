@@ -66,7 +66,7 @@ CAMERA_MAP = {
 # Times are in 24-hour format (e.g., 14 = 2 PM)
 
 # Rule 1: Boss Cabin (Restricted before 11 AM and after 4 PM)
-BOSS_CABIN_OPEN_HOUR = 13  #(10:30 AM IST)
+BOSS_CABIN_OPEN_HOUR = 15  #(10:30 AM IST)
 BOSS_CABIN_CLOSE_HOUR = 16 #(4:30 PM IST)
 
 # Rule 2: General Office (Restricted before Open Time and after 6:30 PM + All day Sunday)
