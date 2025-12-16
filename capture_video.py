@@ -59,10 +59,15 @@ class VideoRecorder:
                 if self.remaining_frames_to_record <= 0:
                     self._stop_recording()
             
-            # Handle Snapshot Sequence
-            if self.snapshot_frames_left > 0:
-                self._save_snapshot(frame_copy, "seq")
-                self.snapshot_frames_left -= 1
+            # Handle Snapshots (Spaced by interval)
+            # Only trigger periodic snapshots if we are recording (Event is active)
+            if self.is_recording:
+                current_time = time.time()
+                # 2.0 seconds interval for intermittent snapshots
+                if current_time - self.last_snapshot_time > 2.0: 
+                    self.last_snapshot_time = current_time
+                    self._save_snapshot(frame_copy, "seq")
+
 
     def trigger_recording(self, alert_types, snapshot_sequence=True):
         """
@@ -84,15 +89,14 @@ class VideoRecorder:
                 
                 # 1. Save Previous Frame (if exists)
                 if len(self.frame_buffer) >= 2:
-                    # -1 is current (just added), -2 is previous
                     self._save_snapshot(self.frame_buffer[-2], "prev")
                 
                 # 2. Save Current Frame
                 if len(self.frame_buffer) >= 1:
                      self._save_snapshot(self.frame_buffer[-1], "curr")
                 
-                # 3. Schedule Next 2 Frames
-                self.snapshot_frames_left = 2
+                # 3. Future snapshots will be handled in add_frame via timer
+
 
             # --- VIDEO LOGIC ---
             if self.is_recording:
