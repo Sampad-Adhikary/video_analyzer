@@ -147,28 +147,26 @@ def check_policy_violation(camera_name, current_time):
     hour = current_time.hour
     minute = current_time.minute
 
+    # Condition A: Sunday (All day restricted)
+    if is_sunday:
+        alerts.append("RESTRICTED_ACCESS_SUNDAY")
+
     # --- Rule 1: Boss Cabin ---
     if camera_name == "BOSS_CABIN":
         # Safe hours: 11:00 to 15:59 (Before 16:00)
         # If earlier than 11 OR later/equal to 16, it's a violation
         if hour < BOSS_CABIN_OPEN_HOUR or hour >= BOSS_CABIN_CLOSE_HOUR:
-            alerts.append("RESTRICTED_ACCESS_BOSS_CABIN")
-            
+            alerts.append("RESTRICTED_ACCESS_BOSS_CABIN")       
     # --- Rule 2: General Office (All other cameras) ---
-    else:
-        # Condition A: Sunday (All day restricted)
-        if is_sunday:
-            alerts.append("RESTRICTED_ACCESS_SUNDAY")
-        
+    else:        
         # Condition B: Before Open Time
         elif hour < OFFICE_OPEN_HOUR or (hour == OFFICE_OPEN_HOUR and minute < OFFICE_OPEN_MIN):
-             alerts.append("RESTRICTED_ACCESS_BEFORE_HOURS")
-             
+             alerts.append("RESTRICTED_ACCESS_BEFORE_HOURS")   
         # Condition C: After Close Time (6:30 PM)
         # Violation if Hour > 18 OR (Hour == 18 AND Min >= 30)
         elif hour > OFFICE_CLOSE_HOUR or (hour == OFFICE_CLOSE_HOUR and minute >= OFFICE_CLOSE_MIN):
-            alerts.append("RESTRICTED_ACCESS_AFTER_HOURS")
-            
+            alerts.append("RESTRICTED_ACCESS_AFTER_HOURS")  
+    
     return alerts
 
 
@@ -249,15 +247,6 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
             unique_cam_id = CAMERA_MAP.get(source_id, f"UNKNOWN_CAM_{source_id}")
 
             # Creating payload to dump in JSON file
-
-            # Old Payload
-            # payload = {
-            #     "timestamp": datetime.datetime.now().isoformat(),
-            #     "camera_id": source_id,
-            #     "frame_id": frame_number,
-            #     "detections": frame_objects
-            # }
-
             # New Payload
             payload = {
                 # METADATA HEADER (The "Who, Where, When")
@@ -444,8 +433,8 @@ def main(args):
 
 
     # Configure Muxer
-    streammux.set_property('width', 1280)   # 1280p
-    streammux.set_property('height', 720)   # 720p
+    streammux.set_property('width', 640)   # 640p
+    streammux.set_property('height', 384)   # 384p
     streammux.set_property('batch-size', 4) # 4 streams
     streammux.set_property('batched-push-timeout', 4000000)
 
@@ -458,8 +447,8 @@ def main(args):
     tracker.set_property('ll-config-file', TRACKER_CONFIG_FILE)
     tracker.set_property('ll-lib-file', '/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so')
 
-    tracker.set_property('tracker-width', 640)
-    tracker.set_property('tracker-height', 384)
+    # tracker.set_property('tracker-width', 640)
+    # tracker.set_property('tracker-height', 384)
 
     # Tiler (Grid view - optional but good for combining streams before probe)
     tiler = Gst.ElementFactory.make("nvmultistreamtiler", "nvtiler")
