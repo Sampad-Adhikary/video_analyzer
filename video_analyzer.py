@@ -40,7 +40,10 @@ last_alert_time = {}
 OUTPUT_JSON_FILE = "detection_log.json"
 # REPLACE THIS with the path to your YOLO config file
 PGIE_CONFIG_FILE = "config_infer_primary_yoloV8.txt" 
-TRACKER_CONFIG_FILE = "config_tracker.yml" 
+SGIE_FIRE_CONFIG_FILE = "config_infer_secondary_fire.txt"
+SGIE_FIGHT_CONFIG_FILE = "config_infer_secondary_fight.txt"
+TRACKER_CONFIG_FILE = "config_tracker.yml"
+ 
 TILED_OUTPUT_WIDTH = 1280
 TILED_OUTPUT_HEIGHT = 720
 # ---------------------
@@ -296,10 +299,18 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
             site_alerts = check_policy_violation(unique_cam_id, now)
             
             # Add visual detections (Fire/Smoke) if they existed
-            # (Assuming you might add fire detection later, leaving hook here)
-            # fire_objs = [obj for obj in frame_objects if obj["label"] in ["fire", "smoke"]]
+            # We check the frame_objects logic which should AUTO-populate from all GIEs if configured correctly.
+            # But we explicitly add alerts for them.
+            fire_objs = [obj for obj in frame_objects if obj["label"] in ["fire", "smoke"]]
+            if fire_objs:
+                site_alerts.append("FIRE_SMOKE_DETECTED")
+                
+            fight_objs = [obj for obj in frame_objects if obj["label"] in ["violence", "fight"]]
+            if fight_objs:
+                site_alerts.append("VIOLENCE_DETECTED")
             
             is_event = len(site_alerts) > 0
+
             
             # 3. Decision Matrix
             should_log_event = is_event and (current_time - last_al >= ALERT_COOLDOWN)
@@ -518,12 +529,17 @@ def main(args):
     pgie.set_property('config-file-path', PGIE_CONFIG_FILE)
 
     # Tracker
+    # Tracker
     tracker = Gst.ElementFactory.make("nvtracker", "tracker")
     tracker.set_property('ll-config-file', TRACKER_CONFIG_FILE)
     tracker.set_property('ll-lib-file', '/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so')
 
-    # tracker.set_property('tracker-width', 640)
-    # tracker.set_property('tracker-height', 384)
+    # NEW: Secondary GIEs
+    sgie_fire = Gst.ElementFactory.make("nvinfer", "secondary-fire-inference")
+    sgie_fire.set_property('config-file-path', SGIE_FIRE_CONFIG_FILE)
+    
+    sgie_fight = Gst.ElementFactory.make("nvinfer", "secondary-fight-inference")
+    sgie_fight.set_property('config-file-path', SGIE_FIGHT_CONFIG_FILE)
 
     # Tiler (Grid view - optional but good for combining streams before probe)
     tiler = Gst.ElementFactory.make("nvmultistreamtiler", "nvtiler")
@@ -543,18 +559,26 @@ def main(args):
 
     pipeline.add(pgie)
     pipeline.add(tracker)
+    pipeline.add(sgie_fire)
+    pipeline.add(sgie_fight)
     pipeline.add(nvvidconv_rgba)
     pipeline.add(caps_rgba)
     pipeline.add(tiler)
     pipeline.add(nvvidconv)
-    pipeline.add(sink)
+    pipeline.add(sink) 
+
 
     streammux.link(pgie)
     pgie.link(tracker)
-    tracker.link(nvvidconv_rgba)
+    # Link Chain: Pgie -> Tracker -> Fire -> Fight -> Converter...
+    tracker.link(sgie_fire)
+    sgie_fire.link(sgie_fight)
+    sgie_fight.link(nvvidconv_rgba)
+    
     nvvidconv_rgba.link(caps_rgba)
     caps_rgba.link(tiler)
     tiler.link(nvvidconv)
+
 
     nvvidconv.link(sink)
 
