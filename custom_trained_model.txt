@@ -1,0 +1,29 @@
+person
+bicycle
+car
+motorcycle
+bus
+truck
+fire hydrant
+bench
+backpack
+umbrella
+handbag
+tie
+suitcase
+bottle
+cup
+chair
+couch
+potted plant
+dining table
+tv
+laptop
+mouse
+remote
+keyboard
+cell phone
+refrigerator
+book
+clock
+scissors
