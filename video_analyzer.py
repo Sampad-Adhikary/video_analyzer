@@ -8,6 +8,10 @@ from pathlib import Path
 import gi
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
+import numpy as np
+import cv2
+import capture_image
+from capture_video import VideoRecorder
 
 # Cache streammux sink pads to avoid duplicate requests
 streammux_sinkpads = {}
@@ -20,6 +24,9 @@ except ImportError:
     sys.exit(1)
     
 # --- CONFIGURATION ---
+# Initialize Recorders
+recorders = {}
+
 OUTPUT_JSON_FILE = "detection_log.json"
 # REPLACE THIS with the path to your YOLO config file
 PGIE_CONFIG_FILE = "config_infer_primary_yoloV8.txt" 
@@ -197,6 +204,29 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
         # Basic Frame Info
         frame_number = frame_meta.frame_num
         source_id = frame_meta.source_id  # Camera ID (0, 1, 2, 3)
+        unique_cam_id = CAMERA_MAP.get(source_id, f"UNKNOWN_CAM_{source_id}")
+        
+        # --- VIDEO BUFFER UPDATE ---
+        # PERFORMANCE: Only capture frames if recorders exist
+        if unique_cam_id in recorders:
+            try:
+                # 1. Get buffer (RGBA) - Pointer only, fast
+                n_frame = pyds.get_nvds_buf_surface(hash(gst_buffer), frame_meta.batch_id)
+                
+                # 2. To Numpy (Copy) - EXPENSIVE
+                # Optimization: Could skip frames here? e.g. if frame_number % 2 == 0?
+                # For now, we do it to ensure smooth video.
+                frame_copy = np.array(n_frame, copy=True, order='C')
+                
+                # 3. To BGR - EXPENSIVE
+                frame_bgr = cv2.cvtColor(frame_copy, cv2.COLOR_RGBA2BGR)
+                
+                # 4. Add to Buffer
+                recorders[unique_cam_id].add_frame(frame_bgr)
+            except Exception as e:
+                pass
+        # ---------------------------
+
         print(f"[DEBUG] Processing frame -> camera={source_id} frame={frame_number}")
         
         # List to hold objects in this frame
@@ -277,6 +307,17 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
                 payload["alerts"] = site_alerts
                 # Also print to console for immediate visibility
                 print(f"[ALERT] {unique_cam_id}: {site_alerts}")
+
+                # --- MEDIA CAPTURE TRIGGER ---
+                # We simply notify the recorder. It has the buffer.
+                if unique_cam_id in recorders:
+                    try:
+                        recorders[unique_cam_id].trigger_recording(site_alerts, snapshot_sequence=True)
+                        payload["capture_triggered"] = True
+                    except Exception as e:
+                        print(f"[ERROR] Trigger failed: {e}")
+                # -----------------------------
+
 
             # -----------------------------------
             
@@ -387,6 +428,14 @@ def main(args):
     # Standard GStreamer Initialization
     Gst.init(None)
 
+    # Initialize Recorders
+    global recorders
+    for i in range(len(args)):
+        cam_name = CAMERA_MAP.get(i, f"UNKNOWN_CAM_{i}")
+        # 1280x720 matches our Pipeline Resolution
+        recorders[cam_name] = VideoRecorder(cam_name, resolution=(640, 384))
+
+
     # Create Pipeline
     pipeline = Gst.Pipeline()
     streammux = Gst.ElementFactory.make("nvstreammux", "Stream-muxer")
@@ -461,16 +510,26 @@ def main(args):
     # We use fakesink because we only care about the JSON side effect
     sink = Gst.ElementFactory.make("fakesink", "nvvideo-renderer")
 
+    # RGBA Converter & Caps (Needed for Python OpenCV extraction)
+    nvvidconv_rgba = Gst.ElementFactory.make("nvvideoconvert", "nvvidconv-rgba")
+    caps_rgba = Gst.ElementFactory.make("capsfilter", "caps-rgba")
+    caps_rgba.set_property("caps", Gst.Caps.from_string("video/x-raw(memory:NVMM), format=RGBA"))
+
     pipeline.add(pgie)
     pipeline.add(tracker)
+    pipeline.add(nvvidconv_rgba)
+    pipeline.add(caps_rgba)
     pipeline.add(tiler)
     pipeline.add(nvvidconv)
     pipeline.add(sink)
 
     streammux.link(pgie)
     pgie.link(tracker)
-    tracker.link(tiler)
+    tracker.link(nvvidconv_rgba)
+    nvvidconv_rgba.link(caps_rgba)
+    caps_rgba.link(tiler)
     tiler.link(nvvidconv)
+
     nvvidconv.link(sink)
 
     # Add Probe to Tiler Sink Pad (This is where we extract JSON)
