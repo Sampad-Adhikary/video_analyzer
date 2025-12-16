@@ -88,11 +88,25 @@ def main():
     # Linkage
     # uridecodebin uses dynamic pads, handled by callback
     def on_pad_added(src, pad):
+        # 1. Check if it's a video pad
+        caps = pad.get_current_caps() or pad.get_caps()
+        name = caps.get_structure(0).get_name()
+        if not name.startswith("video"):
+            # Ignore audio/subtitle pads
+            return
+
+        # 2. Get Sink Pad
         sink_pad = streammux.get_request_pad("sink_0")
         if not sink_pad:
             print("Unable to get sink pad from streammux")
             return
-        pad.link(sink_pad)
+            
+        # 3. Link
+        try:
+            pad.link(sink_pad)
+        except Exception as e:
+            print(f"Failed to link pad: {e}")
+
 
     source.connect("pad-added", on_pad_added)
 
