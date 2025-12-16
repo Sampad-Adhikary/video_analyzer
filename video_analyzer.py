@@ -25,8 +25,17 @@ except ImportError:
     sys.exit(1)
     
 # --- CONFIGURATION ---
-# Initialize Recorders
-recorders = {}
+# Initialize Recorders (Will be populated in main)
+recorders = {} 
+
+# --- LOGGING STRATEGY ---
+HEARTBEAT_INTERVAL = 60.0  # Log summary every 60 seconds (For Dashboard)
+ALERT_COOLDOWN = 5.0       # If Alert happens, wait 5s before logging same alert again (Prevent spam)
+
+# Timers to track last log per camera
+last_heartbeat_time = {} 
+last_alert_time = {}
+# ------------------------
 
 OUTPUT_JSON_FILE = "detection_log.json"
 # REPLACE THIS with the path to your YOLO config file
@@ -277,62 +286,78 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
             # Resolve the unique Camera ID (Fallback to index if not in map)
             unique_cam_id = CAMERA_MAP.get(source_id, f"UNKNOWN_CAM_{source_id}")
 
-            # Creating payload to dump in JSON file
-            # New Payload
-            payload = {
-                # METADATA HEADER (The "Who, Where, When")
-                "meta": {
-                    "ver": "1.0", # Schema version
-                    "ts": datetime.datetime.now().isoformat() + "Z", # Always use UTC for multi-site
-                    "client": CLIENT_ID,
-                    "site": SITE_ID,
-                    "device": DEVICE_ID,
-                    "device": DEVICE_ID,
-                    "cam_id": unique_cam_id,
-                    "src_id": source_id # Keep the raw index for debugging
-                },
-                # DATA BODY (The "What")
-                "data": {
-                    "fid": frame_number,
-                    "people_count": num_people,
-                    "detections": frame_objects
-                }
-            }
-
-            # --- Check for Policy Violations ---
-            # using current system time for checks
+            # 1. Setup Timing & IDs
+            current_time = time.time()
+            last_hb = last_heartbeat_time.get(unique_cam_id, 0)
+            last_al = last_alert_time.get(unique_cam_id, 0)
+            
+            # 2. Check for Policy Violations (Alerts)
             now = datetime.datetime.now()
             site_alerts = check_policy_violation(unique_cam_id, now)
             
-            if site_alerts:
-                payload["alerts"] = site_alerts
-                # Also print to console for immediate visibility
+            # Add visual detections (Fire/Smoke) if they existed
+            # (Assuming you might add fire detection later, leaving hook here)
+            # fire_objs = [obj for obj in frame_objects if obj["label"] in ["fire", "smoke"]]
+            
+            is_event = len(site_alerts) > 0
+            
+            # 3. Decision Matrix
+            should_log_event = is_event and (current_time - last_al >= ALERT_COOLDOWN)
+            should_log_heartbeat = (current_time - last_hb >= HEARTBEAT_INTERVAL)
+            
+            payload = None
+
+            # --- STREAM A: EVENT LOGGING (Heavy, Immediate) ---
+            if should_log_event:
+                last_alert_time[unique_cam_id] = current_time
+                
+                payload = {
+                    "type": "EVENT",
+                    "meta": {
+                        "ts": datetime.datetime.now().isoformat() + "Z",
+                        "cam_id": unique_cam_id,
+                        "site": SITE_ID,
+                        "status": "CRITICAL"
+                    },
+                    "event": {
+                        "triggers": site_alerts,
+                        "people_count": num_people,
+                        "detections": frame_objects
+                    }
+                }
                 print(f"[ALERT] {unique_cam_id}: {site_alerts}")
 
                 # --- MEDIA CAPTURE TRIGGER ---
-                # We simply notify the recorder. It has the buffer.
                 if unique_cam_id in recorders:
                     try:
                         recorders[unique_cam_id].trigger_recording(site_alerts, snapshot_sequence=True)
-                        payload["capture_triggered"] = True
+                        payload["event"]["capture_triggered"] = True
                     except Exception as e:
                         print(f"[ERROR] Trigger failed: {e}")
-                # -----------------------------
-
-
-            # -----------------------------------
             
-            # Print to Console (Optional)
-            print(f"Cam {source_id}: Found {num_people} objects")
-            # Print payload summary (truncated)
-            try:
-                payload_preview = json.dumps(payload)
-                print(f"[DEBUG] Payload preview: {payload_preview[:400]}")
-            except Exception:
-                print("[DEBUG] Payload preview unavailable")
-
-            # Write to File
-            write_json_log(payload)
+            # --- STREAM B: METRIC LOGGING (Periodic) ---
+            elif should_log_heartbeat:
+                last_heartbeat_time[unique_cam_id] = current_time
+                
+                payload = {
+                    "type": "METRIC",
+                    "meta": {
+                        "ts": datetime.datetime.now().isoformat() + "Z",
+                        "cam_id": unique_cam_id,
+                        "site": SITE_ID,
+                        "status": "SAFE"
+                    },
+                    "data": {
+                        "people_count": num_people,
+                        # Including detections as requested in UPDATE
+                        "detections": frame_objects 
+                    }
+                }
+                print(f"[HEARTBEAT] {unique_cam_id}: Count={num_people}")
+            
+            # 4. Write to File (If either condition was met)
+            if payload:
+                write_json_log(payload)
 
         try:
             l_frame = l_frame.next

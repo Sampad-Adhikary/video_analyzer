@@ -38,6 +38,8 @@ class VideoRecorder:
         # Snapshot state
         self.snapshot_frames_left = 0
         self.last_alert_types = []
+        self.last_snapshot_time = 0
+        self.snapshot_cooldown = 3.0  # Seconds between snapshot sets
 
     def add_frame(self, frame_copy):
         """
@@ -73,9 +75,13 @@ class VideoRecorder:
         """
         with self.lock:
             self.last_alert_types = alert_types # Store for filenames
+            current_time = time.time()
 
             # --- SNAPSHOT LOGIC ---
-            if snapshot_sequence:
+            # Rate Limit: Only take snapshots if cooldown has passed
+            if snapshot_sequence and (current_time - self.last_snapshot_time > self.snapshot_cooldown):
+                self.last_snapshot_time = current_time
+                
                 # 1. Save Previous Frame (if exists)
                 if len(self.frame_buffer) >= 2:
                     # -1 is current (just added), -2 is previous
@@ -137,4 +143,3 @@ class VideoRecorder:
         if self.active_writer:
             self.active_writer.release()
             self.active_writer = None
-
