@@ -69,7 +69,7 @@ class VideoRecorder:
                     self._save_snapshot(frame_copy, "seq")
 
 
-    def trigger_recording(self, alert_types, snapshot_sequence=True):
+    def trigger_recording(self, alert_types, snapshot_sequence=True, recording_duration=None):
         """
         Starts recording if not already recording. 
         Dumps existing buffer to file and sets state to capture future frames.
@@ -77,7 +77,10 @@ class VideoRecorder:
         Args:
             alert_types: List of strings.
             snapshot_sequence: If True, saves prev/current/next frames as images.
+            recording_duration: Optional override for post-event duration (seconds).
         """
+        target_duration = recording_duration if recording_duration else self.post_event_seconds
+        
         with self.lock:
             self.last_alert_types = alert_types # Store for filenames
             current_time = time.time()
@@ -101,12 +104,15 @@ class VideoRecorder:
             # --- VIDEO LOGIC ---
             if self.is_recording:
                 # Extend recording time
-                self.remaining_frames_to_record = self.post_event_seconds * self.fps
+                # If a new event needs longer time, extend it.
+                current_remaining = self.remaining_frames_to_record
+                new_required = target_duration * self.fps
+                self.remaining_frames_to_record = max(current_remaining, new_required)
                 return
 
             # Start new video recording
             self.is_recording = True
-            self.remaining_frames_to_record = self.post_event_seconds * self.fps
+            self.remaining_frames_to_record = target_duration * self.fps
             
             # Setup file
             cam_dir = os.path.join(self.save_dir, str(self.cam_id))
