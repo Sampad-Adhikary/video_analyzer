@@ -34,6 +34,7 @@ ALERT_COOLDOWN = 5.0       # If Alert happens, wait 5s before logging same alert
 
 # Timers to track last log per camera
 last_heartbeat_time = {} 
+# Dictionary of dictionaries: { cam_id: { alert_type: last_timestamp } }
 last_alert_time = {}
 # ------------------------
 
@@ -282,7 +283,7 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
                 break
 
         # Construct Final JSON Payload for this Frame
-        if frame_objects and any(obj["label"].lower() in ["person", "tv"] for obj in frame_objects):  # Only log if something is detected
+        if frame_objects and any(obj["label"].lower() in ["person","tv","fire","violence"] for obj in frame_objects):  # Only log if something is detected
             # Count the number of person
             num_people = len([obj for obj in frame_objects if obj["label"].lower() == "person"])
 
@@ -317,14 +318,28 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
 
             
             # 3. Decision Matrix
-            should_log_event = is_event and (current_time - last_al >= ALERT_COOLDOWN)
+            # 3. Decision Matrix (PER ALERT TYPE)
+            # Filter site_alerts to only those that are NOT in cooldown
+            active_alerts_map = last_alert_time.get(unique_cam_id, {})
+            actionable_alerts = []
+            
+            for alert in site_alerts:
+                last_t = active_alerts_map.get(alert, 0)
+                if current_time - last_t >= ALERT_COOLDOWN:
+                    actionable_alerts.append(alert)
+            
             should_log_heartbeat = (current_time - last_hb >= HEARTBEAT_INTERVAL)
             
             payload = None
 
             # --- STREAM A: EVENT LOGGING (Heavy, Immediate) ---
-            if should_log_event:
-                last_alert_time[unique_cam_id] = current_time
+            if actionable_alerts:
+                # Update timestamps for the alerts we are about to log
+                if unique_cam_id not in last_alert_time:
+                    last_alert_time[unique_cam_id] = {}
+                
+                for alert in actionable_alerts:
+                    last_alert_time[unique_cam_id][alert] = current_time
                 
                 payload = {
                     "type": "EVENT",
@@ -335,23 +350,23 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
                         "status": "CRITICAL"
                     },
                     "event": {
-                        "triggers": site_alerts,
+                        "triggers": actionable_alerts,
                         "people_count": num_people,
                         "detections": frame_objects
                     }
                 }
-                print(f"[ALERT] {unique_cam_id}: {site_alerts}")
+                print(f"[ALERT] {unique_cam_id}: {actionable_alerts}")
 
                 # --- MEDIA CAPTURE TRIGGER ---
                 if unique_cam_id in recorders:
                     try:
                         # Determine Duration: 10s for Crowd/Fight, Default (5s) for others
                         rec_duration = None
-                        if any("CROWD" in a for a in site_alerts) or any("VIOLENCE" in a for a in site_alerts):
+                        if any("CROWD" in a for a in actionable_alerts) or any("VIOLENCE" in a for a in actionable_alerts):
                             rec_duration = 10
                             
                         recorders[unique_cam_id].trigger_recording(
-                            site_alerts, 
+                            actionable_alerts, 
                             snapshot_sequence=True,
                             recording_duration=rec_duration
                         )
