@@ -309,6 +309,10 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
             if fight_objs:
                 site_alerts.append("VIOLENCE_DETECTED")
             
+            # --- CROWD DETECTION (BOSS CABIN) ---
+            if unique_cam_id == "BOSS_CABIN" and num_people > 10:
+                site_alerts.append("CROWD_DETECTED_BOSS_CABIN")
+
             is_event = len(site_alerts) > 0
 
             
@@ -341,7 +345,16 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
                 # --- MEDIA CAPTURE TRIGGER ---
                 if unique_cam_id in recorders:
                     try:
-                        recorders[unique_cam_id].trigger_recording(site_alerts, snapshot_sequence=True)
+                        # Determine Duration: 10s for Crowd/Fight, Default (5s) for others
+                        rec_duration = None
+                        if any("CROWD" in a for a in site_alerts) or any("VIOLENCE" in a for a in site_alerts):
+                            rec_duration = 10
+                            
+                        recorders[unique_cam_id].trigger_recording(
+                            site_alerts, 
+                            snapshot_sequence=True,
+                            recording_duration=rec_duration
+                        )
                         payload["event"]["capture_triggered"] = True
                     except Exception as e:
                         print(f"[ERROR] Trigger failed: {e}")
