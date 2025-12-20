@@ -1,2 +1,4 @@
 *.onnx
 *.engine
+bindings
+*.pyc
